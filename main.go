@@ -6,7 +6,6 @@ import (
 	"math"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -80,31 +79,62 @@ func main() {
 	}
 
 	// Determine if the existing voice channel exists for time keeping
-	var ch *discordgo.Channel
+	var timeChannels = map[string]*discordgo.Channel{
+		"UTC":  nil,
+		"PST":  nil,
+		"EST":  nil,
+		"AEST": nil,
+	}
+
 	for _, chv := range chs {
 		if chv.Type != discordgo.ChannelTypeGuildVoice {
 			continue
 		}
 		// Find the channel based on whether or not it has a clock at the start of the channel name
 		chNameParts := strings.Split(chv.Name, " ")
-		clockFace := chNameParts[0]
+		if len(chNameParts) > 2 { // Change this to 3 if using clock faces
+			// clockFace := chNameParts[0]
+			// tz := chNameParts[2]
+			tz := chNameParts[1]
+			mapTZ := ""
 
-		// Determine if the first part of the channel name is a clock face
-		for _, clock := range times {
-			if clockFace == clock {
-				ch = chv
+			switch tz {
+			case "PST", "PDT":
+				mapTZ = "PST"
 				break
+			case "EST", "EDT":
+				mapTZ = "EST"
+				break
+			case "AEST", "AEDT":
+				mapTZ = "AEST"
+				break
+			case "UTC":
+				mapTZ = "UTC"
+				break
+			default:
+				continue
 			}
+			timeChannels[mapTZ] = chv
+
+			// // Determine if the first part of the channel name is a clock face
+			// for _, clock := range times {
+			// 	if clockFace == clock {
+			// 		timeChannels[mapTZ] = chv
+			// 		break
+			// 	}
+			// }
 		}
 	}
 
 	// If the channel doesn't exist, create it
-	if ch == nil {
-		format := makeChannelName()
-		ch, err = discord.GuildChannelCreate(cfg.GuildID, format, discordgo.ChannelTypeGuildVoice)
-		if err != nil {
-			fmt.Println(err.Error())
-			os.Exit(1)
+	for k := range timeChannels {
+		if timeChannels[k] == nil {
+			format := makeChannelName(k)
+			timeChannels[k], err = discord.GuildChannelCreate(cfg.GuildID, format, discordgo.ChannelTypeGuildVoice)
+			if err != nil {
+				fmt.Println(err.Error())
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -117,15 +147,20 @@ func main() {
 			case <-ticker.C:
 				// Only update every 5 minutes
 				if time.Now().Minute()%5 == 0 {
-					format := makeChannelName()
-					// Only attempt to update the channel name if the new name format doesn't match the current one
-					// This is so that we don't keep trying to update 5:00 to 5:00 for example, since there would
-					// theoretically be 11 attempts to change the name in the minute and Discord channels have a rate
-					// limit of 2 updates per 10 minutes
-					if ch.Name != format {
-						ch, err = discord.ChannelEdit(ch.ID, format)
-						if err != nil {
-							fmt.Println(err.Error())
+					for k := range timeChannels {
+						if timeChannels[k] == nil {
+							continue
+						}
+						format := makeChannelName(k)
+						// Only attempt to update the channel name if the new name format doesn't match the current one
+						// This is so that we don't keep trying to update 5:00 to 5:00 for example, since there would
+						// theoretically be 11 attempts to change the name in the minute and Discord channels have a rate
+						// limit of 2 updates per 10 minutes
+						if timeChannels[k].Name != format {
+							timeChannels[k], err = discord.ChannelEdit(timeChannels[k].ID, format)
+							if err != nil {
+								fmt.Println(err.Error())
+							}
 						}
 					}
 				}
@@ -155,17 +190,38 @@ func main() {
 	discord.Close()
 }
 
-func makeChannelName() string {
+func makeChannelName(location string) string {
 	utcTime := time.Now().UTC()
-	timeStrName := utcTime.Format("15:04 | Mon Jan 02")
+	var locTime time.Time
+
+	switch location {
+	case "PST":
+		locTime = localizeTime(utcTime, "America/Los_Angeles")
+		break
+	case "EST":
+		locTime = localizeTime(utcTime, "America/New_York")
+		break
+	case "AEST":
+		locTime = localizeTime(utcTime, "Australia/Melbourne")
+		break
+	default:
+		locTime = utcTime
+		break
+	}
+
+	timeStrName := locTime.Format("15:04 MST | Mon Jan 02")
 	// Get the time as an integer like 530 for 5:30 or 17:30 (as an example) for clock faces
-	timeInt, err := strconv.ParseInt(utcTime.Format("0304"), 10, 64)
+	/* Commented out due to no longer using clock faces
+
+	timeInt, err := strconv.ParseInt(locTime.Format("0304"), 10, 64)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
 	clockFace := getClockFace(timeInt)
-	return fmt.Sprintf("%s %s", clockFace, timeStrName)
+	return fmt.Sprintf("%s %s", clockFace, timeStrName) */
+
+	return timeStrName
 }
 
 func getClockFace(time int64) string {
@@ -181,4 +237,13 @@ func getClockFace(time int64) string {
 		clockFaceTime = int(math.Floor(float64(time)/100) * 100)
 	}
 	return times[clockFaceTime]
+}
+
+func localizeTime(timeUTC time.Time, location string) time.Time {
+	loc, err := time.LoadLocation(location)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	return timeUTC.In(loc)
 }
