@@ -1,0 +1,14 @@
+[Unit]
+Description=MapleStory Timekeeper
+
+[Service]
+User=
+Group=
+ExecStart=
+WorkingDirectory=
+RemainAfterExit=no
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target
