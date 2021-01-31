@@ -24,4 +24,5 @@ jobs:
       # specify any bash command here prefixed with `run: `
       # - run: go get -v -t -d ./main.go
       # - run: go test -v ./main.go
+      - run: go build
       - run: go run main.go
